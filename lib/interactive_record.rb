@@ -1,31 +1,43 @@
 require_relative "../config/environment.rb"
 require 'active_support/inflector'
-require 'pry'
 
 class InteractiveRecord
+
   def self.table_name
     self.to_s.downcase.pluralize
   end
 
   def self.column_names
     DB[:conn].results_as_hash = true
-    sql = "PRAGMA table_info('#{table_name}')"
+
+    sql = "pragma table_info('#{table_name}')"
+
     table_info = DB[:conn].execute(sql)
-    results = []
-    table_info.each {|chunk| results << chunk["name"] }
-    results.compact
+    column_names = []
+    table_info.each do |row|
+      column_names << row["name"]
+    end
+    column_names.compact
+  end
+
+  self.column_names.each do |col_name|
+    attr_accessor col_name.to_sym
   end
 
   def initialize(options={})
-    options.each { |key, value| self.send("#{key}=", value) }
+    options.each do |property, value|
+      self.send("#{property}=", value)
+    end
+  end
+
+  def save
+    sql = "INSERT INTO #{table_name_for_insert} (#{col_names_for_insert}) VALUES (#{values_for_insert})"
+    DB[:conn].execute(sql)
+    @id = DB[:conn].execute("SELECT last_insert_rowid() FROM #{table_name_for_insert}")[0][0]
   end
 
   def table_name_for_insert
     self.class.table_name
-  end
-
-  def col_names_for_insert
-    self.class.column_names.delete_if{|column| column == "id"}.join(", ")
   end
 
   def values_for_insert
@@ -36,31 +48,8 @@ class InteractiveRecord
     values.join(", ")
   end
 
-  def question_marks_for_insert
-    (values_for_insert.length).times.collect{"?"}.join(",")
-  end
-
-  def save
-    self.id ? update : insert
-  end
-
-  def update
-    sql = <<-SQL
-      UPDATE ?
-      SET ? = ?
-      WHERE id = ?;
-    SQL
-    DB[:conn].execute(sql, self.table_name_for_insert, self.col_names_for_insert, self.values_for_insert, self.id)
-
-  end
-
-  def insert
-    sql = <<-SQL
-      INSERT INTO #{self.table_name_for_insert} (#{self.col_names_for_insert})
-      VALUES (#{self.values_for_insert});
-    SQL
-      DB[:conn].execute(sql)
-      @id = DB[:conn].execute("SELECT last_insert_rowid() FROM #{self.table_name_for_insert}")[0][0]
+  def col_names_for_insert
+    self.class.column_names.delete_if {|col| col == "id"}.join(", ")
   end
 
   def self.find_by_name(name)
